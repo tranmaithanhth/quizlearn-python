@@ -22,6 +22,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 SOURCE = ROOT / "data_import" / "toeic_2000.csv"
 OUTPUT = ROOT / "data_import" / "toeic_2000_bilingual.csv"
 CACHE = ROOT / "data_import" / ".toeic_translation_cache.json"
