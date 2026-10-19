@@ -100,6 +100,7 @@ class FlashcardPage(QWidget):
             RATING_GOOD: 0, RATING_EASY: 0,
         }
         self.session_complete_shown = False
+        self.daily_mode = False
         self._setup_ui()
         self._show_empty_state()
 
@@ -208,21 +209,26 @@ class FlashcardPage(QWidget):
         layout.addWidget(self.keyboard_hint)
         self._set_rating_enabled(False)
 
-    def load_study_set(self, set_id: int) -> None:
+    def load_study_set(self, set_id: int, *, due_only: bool = False) -> None:
         try:
             study_set = self.study_set_service.get_study_set(set_id)
-            self.cards = list(self.flashcard_service.get_flashcards_by_set(set_id))
+            self.cards = (
+                self.study_progress_service.build_today_queue(set_id)
+                if due_only
+                else list(self.flashcard_service.get_flashcards_by_set(set_id))
+            )
         except Exception as error:
             QMessageBox.critical(self, "Flashcards", str(error))
             return
 
         self.current_set_id = set_id
+        self.daily_mode = due_only
         self.current_index = 0
         self.reviewed_card_ids.clear()
         for key in self.rating_counts:
             self.rating_counts[key] = 0
         self.session_complete_shown = False
-        self.title_label.setText(study_set.title)
+        self.title_label.setText(("Ôn hôm nay · " if due_only else "") + study_set.title)
         self.description_label.setText(study_set.description or "")
         self.description_label.setVisible(bool(study_set.description))
         self._update_session_progress()
@@ -243,6 +249,11 @@ class FlashcardPage(QWidget):
 
     def _show_empty_state(self) -> None:
         self.flashcard.setVisible(False)
+        self.empty_label.setText(
+            "Đã hoàn thành các thẻ cần ôn hôm nay. Hãy quay lại vào lần ôn tới!"
+            if self.daily_mode
+            else "This study set does not contain any flashcards."
+        )
         self.empty_label.setVisible(True)
         self.speak_button.setEnabled(False)
         self.counter_label.setText("0 / 0")
