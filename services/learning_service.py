@@ -146,6 +146,24 @@ class LearningService:
 
         return result
 
+    def accept_previous_answer(self, flashcard: Flashcard) -> None:
+        """Correct the most recent incorrectly graded Learn answer.
+
+        Used only when a learner manually confirms a valid alternative
+        translation immediately after seeing incorrect feedback.
+        """
+        if flashcard.id is None:
+            raise ValueError("Flashcard chưa có ID hợp lệ.")
+        service = self.study_progress_service
+        with service.database.transaction():
+            progress = service.repository.get_by_flashcard_id(flashcard.id)
+            if progress is None or progress.wrong_count <= 0:
+                raise ValueError("Không có đáp án sai gần nhất để sửa.")
+            progress.wrong_count -= 1
+            progress.correct_count += 1
+            progress.status = service._calculate_status(progress)
+            service.repository.update(progress)
+
     @staticmethod
     def get_prompt_and_answer_hint(
         flashcard: Flashcard,
