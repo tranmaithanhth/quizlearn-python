@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
         self.create_page.cancel_requested.connect(self.show_home_page)
         self.create_page.study_set_created.connect(self._on_study_set_created)
         self.study_set_detail_page.back_requested.connect(self.show_home_page)
+        self.study_set_detail_page.today_review_requested.connect(self.open_today_review)
         self.study_set_detail_page.flashcards_requested.connect(self.open_flashcards)
         self.study_set_detail_page.learn_requested.connect(self.open_learn_mode)
         self.study_set_detail_page.test_requested.connect(self.open_test_mode)
@@ -154,6 +155,13 @@ class MainWindow(QMainWindow):
         if self.study_set_detail_page.load_study_set(set_id):
             self.pages.setCurrentWidget(self.study_set_detail_page)
             self.sidebar.set_active(None)
+
+    def open_today_review(self, set_id: int) -> None:
+        self.flashcard_page.load_study_set(set_id, due_only=True)
+        if self.flashcard_page.current_set_id == set_id:
+            self.pages.setCurrentWidget(self.flashcard_page)
+            self.sidebar.set_active(None)
+            self.flashcard_page.setFocus()
 
     def open_flashcards(self, set_id: int) -> None:
         self.flashcard_page.load_study_set(set_id)
