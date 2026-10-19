@@ -1,4 +1,4 @@
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QSettings
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QMessageBox,
     QProgressBar,
+    QSpinBox,
 )
 
 from services.study_set_service import StudySetService
@@ -46,7 +47,7 @@ class StudyModeCard(QFrame):
 
 class StudySetDetailPage(QWidget):
     back_requested = Signal()
-    today_review_requested = Signal(int)
+    today_review_requested = Signal(int, int, int)
     flashcards_requested = Signal(int)
     learn_requested = Signal(int)
     test_requested = Signal(int)
@@ -112,6 +113,27 @@ class StudySetDetailPage(QWidget):
         section_title = QLabel("Study modes")
         section_title.setObjectName("SectionTitle")
         layout.addWidget(section_title)
+
+        limits = QHBoxLayout()
+        limits.addWidget(QLabel("Từ mới / phiên:"))
+        self.new_limit_input = QSpinBox()
+        self.new_limit_input.setRange(0, 100)
+        self.new_limit_input.setValue(int(QSettings("QuizLearn", "QuizLearn").value("daily_new_limit", 15)))
+        self.new_limit_input.valueChanged.connect(
+            lambda value: QSettings("QuizLearn", "QuizLearn").setValue("daily_new_limit", value)
+        )
+        limits.addWidget(self.new_limit_input)
+        limits.addSpacing(18)
+        limits.addWidget(QLabel("Thẻ ôn / phiên:"))
+        self.review_limit_input = QSpinBox()
+        self.review_limit_input.setRange(0, 500)
+        self.review_limit_input.setValue(int(QSettings("QuizLearn", "QuizLearn").value("daily_review_limit", 100)))
+        self.review_limit_input.valueChanged.connect(
+            lambda value: QSettings("QuizLearn", "QuizLearn").setValue("daily_review_limit", value)
+        )
+        limits.addWidget(self.review_limit_input)
+        limits.addStretch()
+        layout.addLayout(limits)
 
         self.today_mode = StudyModeCard(
             "Ôn tập hôm nay",
@@ -199,7 +221,7 @@ class StudySetDetailPage(QWidget):
 
     def _request_today_review(self):
         if self.current_set_id is not None:
-            self.today_review_requested.emit(self.current_set_id)
+            self.today_review_requested.emit(self.current_set_id, self.new_limit_input.value(), self.review_limit_input.value())
 
     def _request_flashcards(self):
         if self.current_set_id is not None:
