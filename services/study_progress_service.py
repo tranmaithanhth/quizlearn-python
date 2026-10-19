@@ -77,6 +77,44 @@ class StudyProgressService:
             "mastered_percent": percent,
         }
 
+    def build_today_queue(
+        self,
+        set_id: int,
+        *,
+        new_limit: int = 15,
+        review_limit: int = 100,
+        now: datetime | None = None,
+    ) -> list:
+        """Due reviews first, then a small batch of unseen cards.
+
+        Existing scheduled reviews (including MASTERED) remain eligible.
+        Future-due cards stay out of the daily queue. This is a
+        lightweight Anki-inspired queue, not Anki's FSRS scheduler.
+        """
+        if not self.study_set_repository.exists(set_id):
+            raise ValueError("Không tìm thấy bộ học.")
+        if new_limit < 0 or review_limit < 0:
+            raise ValueError("Daily limits must be nonnegative.")
+        now = now or datetime.now()
+        cards = self.flashcard_repository.get_by_set_id(set_id)
+        progress = {
+            p.flashcard_id: p
+            for p in self.repository.get_by_set_id(set_id)
+        }
+        due = []
+        new = []
+        for card in cards:
+            state = progress.get(card.id)
+            if state is None or state.review_count == 0:
+                new.append(card)
+            elif state.next_review is not None and state.next_review <= now:
+                due.append((state.next_review, card))
+            elif state.next_review is None:
+                # Legacy cards with previous reviews but no due date.
+                due.append((datetime.min, card))
+        due.sort(key=lambda item: item[0])
+        return [card for _, card in due[:review_limit]] + new[:new_limit]
+
     def record_answer(
         self,
         flashcard_id: int,
