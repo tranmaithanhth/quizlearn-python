@@ -125,6 +125,12 @@ class FlashcardPage(QWidget):
         self.title_label.setObjectName("PageTitle")
         header.addWidget(self.title_label)
         header.addStretch()
+        self.pause_button = QPushButton("Tạm dừng")
+        self.pause_button.setObjectName("SecondaryButton")
+        self.pause_button.setFocusPolicy(Qt.NoFocus)
+        self.pause_button.clicked.connect(self.back_requested.emit)
+        self.pause_button.hide()
+        header.addWidget(self.pause_button)
         self.reset_button = QPushButton("Bắt đầu phiên mới")
         self.reset_button.setObjectName("SecondaryButton")
         self.reset_button.setFocusPolicy(Qt.NoFocus)
@@ -234,6 +240,7 @@ class FlashcardPage(QWidget):
             self.review_limit = review_limit
             self.daily_mode = due_only
             self.reset_button.setVisible(due_only)
+            self.pause_button.setVisible(due_only)
             self.pending_ids = []
             self.session_total = 0
             self.session_completed = 0
@@ -307,7 +314,10 @@ class FlashcardPage(QWidget):
     def _show_card(self) -> None:
         card = self.cards[self.current_index]
         self.flashcard.set_card(card.term, card.definition)
-        self.counter_label.setText(f"{self.current_index + 1} / {len(self.cards)}")
+        self.counter_label.setText(
+            f"{self.session_completed + 1} / {self.session_total}"
+            if self.daily_mode else f"{self.current_index + 1} / {len(self.cards)}"
+        )
         self.flashcard.setVisible(True)
         self.empty_label.setVisible(False)
         self.speak_button.setEnabled(True)
