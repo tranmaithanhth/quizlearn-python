@@ -156,8 +156,10 @@ class MainWindow(QMainWindow):
             self.pages.setCurrentWidget(self.study_set_detail_page)
             self.sidebar.set_active(None)
 
-    def open_today_review(self, set_id: int) -> None:
-        self.flashcard_page.load_study_set(set_id, due_only=True)
+    def open_today_review(self, set_id: int, new_limit: int, review_limit: int) -> None:
+        self.flashcard_page.load_study_set(
+            set_id, due_only=True, new_limit=new_limit, review_limit=review_limit
+        )
         if self.flashcard_page.current_set_id == set_id:
             self.pages.setCurrentWidget(self.flashcard_page)
             self.sidebar.set_active(None)
