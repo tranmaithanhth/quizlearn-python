@@ -3,7 +3,6 @@ from PySide6.QtWidgets import (
     QWidget,
     QHBoxLayout,
     QStackedWidget,
-    QMessageBox,
 )
 
 from services.study_set_service import StudySetService
@@ -134,15 +133,12 @@ class MainWindow(QMainWindow):
         self.learn_page.back_requested.connect(self._back_from_learn)
         self.test_page.back_requested.connect(self._back_from_test)
 
-        self.pronunciation_service.finished.connect(
-            self.pronunciation_service.play_downloaded_file
-        )
         self.pronunciation_service.failed.connect(
             self._show_pronunciation_error
         )
 
     def _show_pronunciation_error(self, message: str) -> None:
-        QMessageBox.warning(self, "Pronunciation", message)
+        self.statusBar().showMessage(f"🔊 {message}", 10000)
 
     def show_home_page(self) -> None:
         self.home_page.refresh()
