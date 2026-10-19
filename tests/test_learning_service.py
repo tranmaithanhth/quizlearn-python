@@ -109,6 +109,53 @@ class LearningServiceTest(unittest.TestCase):
         )
         self.assertFalse(result.is_correct)
 
+    def test_structured_card_accepts_exact_vietnamese_meaning(self) -> None:
+        card = Flashcard(
+            id=None, set_id=self.study_set.id, term="affordable",
+            definition=(
+                "Nghĩa: giá phải chăng\n"
+                "Từ loại: adjective\n\n"
+                "Ví dụ: The hotel offers affordable rooms.\n"
+                "Dịch: Khách sạn có các phòng giá phải chăng."
+            ),
+        )
+        for answer in ("giá phải chăng", "giá hợp lý", "vừa túi tiền"):
+            with self.subTest(answer=answer):
+                result = self.learning_service.check_answer(card, answer)
+                self.assertTrue(result.is_correct)
+
+    def test_structured_card_rejects_wrong_or_example_text(self) -> None:
+        card = Flashcard(
+            id=None, set_id=self.study_set.id, term="affordable",
+            definition=(
+                "Nghĩa: giá phải chăng\n"
+                "Từ loại: adjective\n"
+                "Ví dụ: Affordable rooms are available.\n"
+                "Dịch: Các phòng giá phải chăng đang có sẵn."
+            ),
+        )
+        for answer in ("giá đắt đỏ", "adjective", "Các phòng giá phải chăng đang có sẵn."):
+            with self.subTest(answer=answer):
+                self.assertFalse(self.learning_service.check_answer(card, answer).is_correct)
+
+    def test_reverse_direction_shows_meaning_not_examples(self) -> None:
+        card = Flashcard(
+            id=None, set_id=self.study_set.id, term="invoice",
+            definition="Nghĩa: hóa đơn\nTừ loại: noun\nVí dụ: Please pay the invoice.",
+        )
+        prompt, displayed, hint = self.learning_service.get_prompt_and_answer_hint(
+            card, DIRECTION_DEFINITION_TO_TERM,
+        )
+        self.assertEqual(displayed, "hóa đơn")
+        self.assertTrue(self.learning_service.check_answer(
+            card, "invoice", DIRECTION_DEFINITION_TO_TERM
+        ).is_correct)
+
+    def test_legacy_multimeaning_card_still_works(self) -> None:
+        self.assertTrue(self.learning_service.check_answer(
+            self.card, "mua sắm"
+        ).is_correct)
+
     def test_empty_answer_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             self.learning_service.check_answer(
