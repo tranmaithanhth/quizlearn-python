@@ -1,12 +1,12 @@
 """Create a verified bilingual, topic-grouped TOEIC pack.
 
 Run:
-    python scripts/build_toeic_bilingual.py
+    python scripts/build_toeic_bilingual.py\n    # Optional: TOEIC_TRANSLATE_MODE=online
 
 Source is data_import/toeic_2000.csv. English example sentences are
 rewritten/generated where missing, then *translated* into Vietnamese.
 Results are cached to data_import/.toeic_translation_cache.json so an
-interruption can be resumed. Uses public Google Translate HTTP endpoint,
+interruption can be resumed. Defaults to an offline MarianMT model; optional online mode uses a public endpoint,
 which is unofficial and may stop working. Fail closed: do not create a
 mislabelled bilingual CSV on translation failure.
 """
@@ -217,12 +217,60 @@ def translate(text, cache):
     )
 
 
+def prepare_offline_cache(rows, cache):
+    """Fill only missing translations in batches; checkpoint after each batch."""
+    from services.offline_translation import OfflineTranslator
+
+    texts = []
+    seen = set(cache)
+    for row in rows:
+        word = row["term"].strip()
+        pos = pos_for(word, row["part_of_speech"])
+        topic = topic_for(word)
+        example = example_for(word, row["example"], pos, topic)
+        candidates = [example]
+        if row.get("meaning_language") != "vi":
+            candidates.append(row["definition"].strip())
+        for value in candidates:
+            value = value.strip()
+            if value and value not in seen:
+                seen.add(value)
+                texts.append(value)
+
+    if not texts:
+        print("All required translations are already cached.", flush=True)
+        return
+
+    print(f"Offline translation: {len(texts)} missing texts; existing cache preserved.", flush=True)
+    translator = OfflineTranslator()
+    batch_size = 8
+    for offset in range(0, len(texts), batch_size):
+        chunk = texts[offset:offset + batch_size]
+        translated = translator.translate_batch(chunk)
+        if len(translated) != len(chunk):
+            raise RuntimeError("Offline translation produced an unexpected number of results.")
+        for original, target in zip(chunk, translated):
+            if not target.strip():
+                save_cache(cache)
+                raise RuntimeError(f"Offline translation failed for {original!r}")
+            cache[original] = target.strip()
+        save_cache(cache)
+        done = min(offset + batch_size, len(texts))
+        if done % 80 == 0 or done == len(texts):
+            print(f"Offline translated {done}/{len(texts)} missing texts", flush=True)
+
+
 def build():
     with SOURCE.open(encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
     if len(rows) != 2000 or len({r["term"].lower() for r in rows}) != 2000:
         raise ValueError("Source must contain 2000 unique entries.")
     cache = load_cache()
+    mode = os.environ.get("TOEIC_TRANSLATE_MODE", "offline").strip().lower()
+    if mode == "offline":
+        prepare_offline_cache(rows, cache)
+    elif mode != "online":
+        raise ValueError("TOEIC_TRANSLATE_MODE must be offline or online.")
     output = []
     columns = ["topic", "term", "meaning_vi", "part_of_speech",
                "example_en", "example_vi", "source_index"]
@@ -235,9 +283,9 @@ def build():
         meaning = (
             row["definition"].strip()
             if row.get("meaning_language") == "vi"
-            else translate(row["definition"], cache)
+            else cache[row["definition"].strip()] if mode == "offline" else translate(row["definition"], cache)
         )
-        translated_example = translate(english_example, cache)
+        translated_example = cache[english_example] if mode == "offline" else translate(english_example, cache)
         output.append({
             "topic": topic, "term": word, "meaning_vi": meaning,
             "part_of_speech": pos, "example_en": english_example,
