@@ -95,6 +95,15 @@ class LearnPage(QWidget):
         self.correct_answer_label.setWordWrap(True)
         self.correct_answer_label.setVisible(False)
         layout.addWidget(self.correct_answer_label)
+        self.accept_answer_button = QPushButton("✓ Đáp án của tôi cũng đúng")
+        self.accept_answer_button.setObjectName("SecondaryButton")
+        self.accept_answer_button.setToolTip(
+            "Dùng khi bạn chắc chắn nghĩa trả lời là tương đương. "
+            "Thẻ sẽ được tính đúng và không lặp lại trong phiên."
+        )
+        self.accept_answer_button.clicked.connect(self._accept_own_answer)
+        self.accept_answer_button.setVisible(False)
+        layout.addWidget(self.accept_answer_button, alignment=Qt.AlignCenter)
 
         actions = QHBoxLayout()
         actions.addStretch()
@@ -176,6 +185,7 @@ class LearnPage(QWidget):
         self.feedback_label.clear()
         self.correct_answer_label.clear()
         self.correct_answer_label.setVisible(False)
+        self.accept_answer_button.setVisible(False)
         self.submit_button.setText("Check")
         self.awaiting_next = False
         self._update_progress()
@@ -212,9 +222,45 @@ class LearnPage(QWidget):
             self.correct_answer_label.setText(f"Correct answer: {result.canonical_answer}")
             self.correct_answer_label.setVisible(True)
             self.queue.append((self.current_card, self.current_direction))
+            self.accept_answer_button.setVisible(True)
         self.stats_label.setText(f"Correct: {self.correct_count}    Incorrect: {self.wrong_count}")
         self.submit_button.setText("Continue")
         self.awaiting_next = True
+        self._update_progress()
+
+    def _accept_own_answer(self):
+        if (
+            not self.awaiting_next
+            or self.current_card is None
+            or not self.accept_answer_button.isVisible()
+        ):
+            return
+        try:
+            self.learning_service.accept_previous_answer(self.current_card)
+        except Exception as error:
+            QMessageBox.warning(self, "Learn", str(error))
+            return
+
+        self.wrong_count = max(0, self.wrong_count - 1)
+        self.correct_count += 1
+        # The wrong answer was queued again; remove that pending repetition.
+        for index in range(len(self.queue) - 1, -1, -1):
+            card, direction = self.queue[index]
+            if card.id == self.current_card.id and direction == self.current_direction:
+                self.queue.pop(index)
+                break
+        self.feedback_label.setText("✓ Đã chấp nhận đáp án tương đương")
+        self.correct_answer_label.setText(
+            f"Đáp án tham khảo: "
+            f"{self.learning_service._display_meaning_only(self.current_card.definition)}"
+            if self.current_direction == DIRECTION_TERM_TO_DEFINITION
+            else f"Đáp án tham khảo: {self.current_card.term}"
+        )
+        self.correct_answer_label.setVisible(True)
+        self.accept_answer_button.setVisible(False)
+        self.stats_label.setText(
+            f"Correct: {self.correct_count}    Incorrect: {self.wrong_count}"
+        )
         self._update_progress()
 
     def _update_progress(self):
@@ -236,7 +282,7 @@ class LearnPage(QWidget):
 
     def _show_empty_state(self):
         self.current_card = None
-        for widget in (self.question_frame, self.answer_input, self.submit_button, self.feedback_label, self.correct_answer_label, self.stats_label, self.keyboard_hint):
+        for widget in (self.question_frame, self.answer_input, self.submit_button, self.feedback_label, self.correct_answer_label, self.accept_answer_button, self.stats_label, self.keyboard_hint):
             widget.setVisible(False)
         self.empty_label.setVisible(True)
         self.mode_combo.setEnabled(False)
