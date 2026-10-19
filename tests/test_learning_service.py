@@ -156,6 +156,23 @@ class LearningServiceTest(unittest.TestCase):
             self.card, "mua sắm"
         ).is_correct)
 
+    def test_manual_acceptance_corrects_progress_without_new_review(self) -> None:
+        card = self.flashcard_repository.create(
+            Flashcard(
+                id=None, set_id=self.study_set.id, term="affordable",
+                definition="Nghĩa: giá phải chăng\nTừ loại: adjective",
+            )
+        )
+        result = self.learning_service.submit_answer(card, "với mức giá dễ chịu")
+        self.assertFalse(result.is_correct)
+        before = self.progress_repository.get_by_flashcard_id(card.id)
+        self.assertEqual((before.review_count, before.wrong_count), (1, 1))
+        self.learning_service.accept_previous_answer(card)
+        after = self.progress_repository.get_by_flashcard_id(card.id)
+        self.assertEqual(after.review_count, 1)
+        self.assertEqual(after.correct_count, 1)
+        self.assertEqual(after.wrong_count, 0)
+
     def test_empty_answer_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             self.learning_service.check_answer(
