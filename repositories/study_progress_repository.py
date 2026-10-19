@@ -157,8 +157,7 @@ class StudyProgressRepository:
                     CASE
                         WHEN sp.next_review IS NOT NULL
                              AND sp.next_review <= CURRENT_TIMESTAMP
-                             AND sp.status != 'MASTERED'
-                        THEN 1
+                                                     THEN 1
                         ELSE 0
                     END
                 ) AS due_count
