@@ -12,6 +12,7 @@ mislabelled bilingual CSV on translation failure.
 """
 import csv
 import json
+import os
 import re
 import sys
 import time
@@ -152,19 +153,31 @@ def save_cache(cache):
     tmp.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(CACHE)
 
+# Unofficial endpoint: use conservative pacing, not aggressive retries.
+# Optionally set TOEIC_TRANSLATE_DELAY=3 (seconds) on slow connections.
+REQUEST_DELAY = max(1.5, float(os.environ.get("TOEIC_TRANSLATE_DELAY", "2.0")))
+_last_request_at = 0.0
+
+
 def translate(text, cache):
-    """Return actual VI output; do not silently copy untranslated English."""
+    """Translate and cache one text; stop on HTTP 429 to respect rate limits."""
+    global _last_request_at
     text = text.strip()
     if text in cache:
         return cache[text]
+
     query = urlencode({
         "client": "gtx", "sl": "en", "tl": "vi", "dt": "t", "q": text,
     })
     endpoint = "https://translate.googleapis.com/translate_a/single?" + query
     last_error = None
-    for attempt in range(5):
+    for attempt in range(3):
         try:
-            req = Request(endpoint, headers={"User-Agent": "Mozilla/5.0 QuizLearn"})
+            wait = REQUEST_DELAY - (time.monotonic() - _last_request_at)
+            if wait > 0:
+                time.sleep(wait)
+            _last_request_at = time.monotonic()
+            req = Request(endpoint, headers={"User-Agent": "QuizLearn/1.0"})
             with urlopen(req, timeout=25) as response:
                 payload = json.load(response)
             result = "".join(
@@ -174,17 +187,35 @@ def translate(text, cache):
             if not result or result.casefold() == text.casefold():
                 raise ValueError("No actual Vietnamese translation returned")
             cache[text] = result
-            if len(cache) % 25 == 0:
-                save_cache(cache)
-            time.sleep(0.12)
+            # A crash/interrupt loses at most one successful translation.
+            save_cache(cache)
             return result
-        except (HTTPError, URLError, OSError, ValueError, IndexError, TypeError) as exc:
+        except HTTPError as exc:
+            if exc.code == 429:
+                save_cache(cache)
+                retry_after = exc.headers.get("Retry-After")
+                hint = (
+                    f" The service suggested Retry-After: {retry_after}."
+                    if retry_after else ""
+                )
+                raise RuntimeError(
+                    "HTTP 429: translation provider rate-limited this session."
+                    + hint
+                    + " Stop requests and try again later; your successful "
+                    "translations have been saved in the cache."
+                ) from exc
             last_error = exc
-            time.sleep(min(2 ** attempt, 12))
+        except (URLError, OSError, ValueError, IndexError, TypeError) as exc:
+            last_error = exc
+        if attempt < 2:
+            time.sleep(3 * (attempt + 1))
+
+    save_cache(cache)
     raise RuntimeError(
         f"Translation failed for {text!r}: {last_error}. "
-        "No incomplete bilingual file was written; rerun to resume from cache."
+        "Completed translations remain cached; rerun later."
     )
+
 
 def build():
     with SOURCE.open(encoding="utf-8-sig", newline="") as handle:
@@ -214,7 +245,7 @@ def build():
         })
         if index % 50 == 0:
             save_cache(cache)
-            print(f"Translated {index}/2000 vocabulary entries", flush=True)
+            print(f"Processed {index}/2000 vocabulary entries (translations cached)", flush=True)
     if len(output) != 2000 or any(
         not all(item.get(k, "").strip() for k in columns[:-1])
         for item in output
