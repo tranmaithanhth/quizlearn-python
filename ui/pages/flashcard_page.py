@@ -13,6 +13,7 @@ from services.study_set_service import StudySetService
 from services.flashcard_service import FlashcardService
 from services.study_progress_service import StudyProgressService
 from services.pronunciation_service import PronunciationService
+from services.daily_session import DailySessionStore
 
 
 class FlashcardWidget(QFrame):
@@ -101,6 +102,12 @@ class FlashcardPage(QWidget):
         }
         self.session_complete_shown = False
         self.daily_mode = False
+        self.pending_ids = []
+        self.session_total = 0
+        self.session_completed = 0
+        self.session_store = DailySessionStore(
+            self.study_progress_service.database.database_path.parent / 'sessions'
+        )
         self._setup_ui()
         self._show_empty_state()
 
@@ -118,6 +125,12 @@ class FlashcardPage(QWidget):
         self.title_label.setObjectName("PageTitle")
         header.addWidget(self.title_label)
         header.addStretch()
+        self.reset_button = QPushButton("Bắt đầu phiên mới")
+        self.reset_button.setObjectName("SecondaryButton")
+        self.reset_button.setFocusPolicy(Qt.NoFocus)
+        self.reset_button.clicked.connect(self._restart_daily_session)
+        self.reset_button.hide()
+        header.addWidget(self.reset_button)
         self.speak_button = QPushButton("🔊  Pronounce")
         self.speak_button.setObjectName("PronounceButton")
         # Không cho nút giữ keyboard focus. Nếu nút đang focus, phím Space
@@ -209,24 +222,62 @@ class FlashcardPage(QWidget):
         layout.addWidget(self.keyboard_hint)
         self._set_rating_enabled(False)
 
-    def load_study_set(self, set_id: int, *, due_only: bool = False) -> None:
+    def load_study_set(
+        self, set_id: int, *, due_only: bool = False,
+        new_limit: int = 15, review_limit: int = 100,
+        restart: bool = False,
+    ) -> None:
         try:
             study_set = self.study_set_service.get_study_set(set_id)
-            self.cards = (
-                self.study_progress_service.build_today_queue(set_id)
-                if due_only
-                else list(self.flashcard_service.get_flashcards_by_set(set_id))
-            )
+            all_cards = list(self.flashcard_service.get_flashcards_by_set(set_id))
+            self.new_limit = new_limit
+            self.review_limit = review_limit
+            self.daily_mode = due_only
+            self.reset_button.setVisible(due_only)
+            self.pending_ids = []
+            self.session_total = 0
+            self.session_completed = 0
+            self.reviewed_card_ids.clear()
+            self.rating_counts = {
+                RATING_AGAIN: 0, RATING_HARD: 0,
+                RATING_GOOD: 0, RATING_EASY: 0,
+            }
+            if due_only:
+                if restart:
+                    self.session_store.clear(set_id)
+                saved = self.session_store.load(set_id)
+                by_id = {card.id: card for card in all_cards}
+                if saved:
+                    self.pending_ids = [
+                        card_id for card_id in saved["pending"] if card_id in by_id
+                    ]
+                    self.session_total = saved["total"]
+                    self.session_completed = saved["completed"]
+                    self.rating_counts.update({
+                        key: int(saved["ratings"].get(key, 0))
+                        for key in self.rating_counts
+                    })
+                    if not self.pending_ids:
+                        self.session_store.clear(set_id)
+                        saved = None
+                if not saved:
+                    queue = self.study_progress_service.build_today_queue(
+                        set_id, new_limit=new_limit, review_limit=review_limit
+                    )
+                    self.pending_ids = [card.id for card in queue]
+                    self.session_total = len(self.pending_ids)
+                    self.session_completed = 0
+                self.cards = [by_id[i] for i in self.pending_ids]
+                if self.cards:
+                    self._save_daily_session(set_id)
+            else:
+                self.cards = all_cards
         except Exception as error:
             QMessageBox.critical(self, "Flashcards", str(error))
             return
 
         self.current_set_id = set_id
-        self.daily_mode = due_only
         self.current_index = 0
-        self.reviewed_card_ids.clear()
-        for key in self.rating_counts:
-            self.rating_counts[key] = 0
         self.session_complete_shown = False
         self.title_label.setText(("Ôn hôm nay · " if due_only else "") + study_set.title)
         self.description_label.setText(study_set.description or "")
@@ -234,6 +285,24 @@ class FlashcardPage(QWidget):
         self._update_session_progress()
         self._show_card() if self.cards else self._show_empty_state()
         self.setFocus(Qt.OtherFocusReason)
+
+    def _save_daily_session(self, set_id=None):
+        if not self.daily_mode:
+            return
+        set_id = self.current_set_id if set_id is None else set_id
+        if set_id is not None:
+            self.session_store.save(
+                set_id, self.pending_ids, self.session_total,
+                self.session_completed, self.rating_counts,
+            )
+
+    def _restart_daily_session(self):
+        if self.current_set_id is not None:
+            self.load_study_set(
+                self.current_set_id, due_only=True,
+                new_limit=self.new_limit, review_limit=self.review_limit,
+                restart=True,
+            )
 
     def _show_card(self) -> None:
         card = self.cards[self.current_index]
@@ -250,7 +319,7 @@ class FlashcardPage(QWidget):
     def _show_empty_state(self) -> None:
         self.flashcard.setVisible(False)
         self.empty_label.setText(
-            "Đã hoàn thành các thẻ cần ôn hôm nay. Hãy quay lại vào lần ôn tới!"
+            "Không còn thẻ trong phiên ôn. Hãy quay lại vào lần ôn tới!"
             if self.daily_mode
             else "This study set does not contain any flashcards."
         )
@@ -284,8 +353,46 @@ class FlashcardPage(QWidget):
         except Exception as error:
             QMessageBox.critical(self, "Study Progress", str(error))
             return
-        self.reviewed_card_ids.add(card.id)
         self.rating_counts[rating] += 1
+
+        if self.daily_mode:
+            # Daily sessions use a pending queue, not the free-review index.
+            # Again returns after up to three other cards. It is not counted
+            # as completed until a subsequent Hard/Good/Easy response.
+            if self.pending_ids and self.pending_ids[0] == card.id:
+                self.pending_ids.pop(0)
+            elif card.id in self.pending_ids:
+                self.pending_ids.remove(card.id)
+            if rating == RATING_AGAIN:
+                self.pending_ids.insert(min(3, len(self.pending_ids)), card.id)
+            else:
+                self.session_completed += 1
+            self._save_daily_session()
+            self._update_session_progress()
+            if not self.pending_ids:
+                self.session_store.clear(self.current_set_id)
+                self._show_session_complete()
+                self.cards = []
+                self._show_empty_state()
+                return
+            by_id = {
+                c.id: c for c in self.flashcard_service.get_flashcards_by_set(
+                    self.current_set_id
+                )
+            }
+            self.pending_ids = [i for i in self.pending_ids if i in by_id]
+            self.cards = [by_id[i] for i in self.pending_ids]
+            self.current_index = 0
+            self._save_daily_session()
+            if self.cards:
+                self._show_card()
+            else:
+                self.session_store.clear(self.current_set_id)
+                self._show_session_complete()
+                self._show_empty_state()
+            return
+
+        self.reviewed_card_ids.add(card.id)
         self._update_session_progress()
         self.card_status_label.setText(
             f"{rating.title()} · next review in {progress.interval_days} day(s)"
@@ -301,8 +408,8 @@ class FlashcardPage(QWidget):
                 break
 
     def _update_session_progress(self) -> None:
-        total = len(self.cards)
-        reviewed = len(self.reviewed_card_ids)
+        total = self.session_total if self.daily_mode else len(self.cards)
+        reviewed = self.session_completed if self.daily_mode else len(self.reviewed_card_ids)
         self.session_progress.setRange(0, max(total, 1))
         self.session_progress.setValue(reviewed)
         self.progress_text_label.setText(f"{reviewed} / {total} reviewed")
@@ -313,7 +420,7 @@ class FlashcardPage(QWidget):
         self.session_complete_shown = True
         QMessageBox.information(
             self, "Flashcard Session Complete",
-            f"Reviewed: {len(self.reviewed_card_ids)} / {len(self.cards)}\n\n"
+            f"Reviewed: {self.session_completed if self.daily_mode else len(self.reviewed_card_ids)} / {self.session_total if self.daily_mode else len(self.cards)}\n\n"
             f"Again: {self.rating_counts[RATING_AGAIN]}\n"
             f"Hard: {self.rating_counts[RATING_HARD]}\n"
             f"Good: {self.rating_counts[RATING_GOOD]}\n"
@@ -326,10 +433,10 @@ class FlashcardPage(QWidget):
 
     def _update_navigation(self) -> None:
         has_cards = bool(self.cards)
-        self.previous_button.setEnabled(has_cards and self.current_index > 0)
-        self.next_button.setEnabled(has_cards and self.current_index < len(self.cards) - 1)
+        self.previous_button.setEnabled(not self.daily_mode and has_cards and self.current_index > 0)
+        self.next_button.setEnabled(not self.daily_mode and has_cards and self.current_index < len(self.cards) - 1)
         self.flip_button.setEnabled(has_cards)
-        self.shuffle_button.setEnabled(has_cards)
+        self.shuffle_button.setEnabled(not self.daily_mode and has_cards)
 
     def previous_card(self) -> None:
         if self.current_index > 0:
@@ -342,7 +449,7 @@ class FlashcardPage(QWidget):
             self._show_card()
 
     def _shuffle(self) -> None:
-        if self.cards:
+        if self.cards and not self.daily_mode:
             random.shuffle(self.cards)
             self.current_index = 0
             self._show_card()
