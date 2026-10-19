@@ -8,6 +8,29 @@ from services.study_progress_service import StudyProgressService
 
 DIRECTION_TERM_TO_DEFINITION = "term_to_definition"
 DIRECTION_DEFINITION_TO_TERM = "definition_to_term"
+MEANING_LABEL = re.compile(r"^\s*(?:nghĩa|meaning)\s*:\s*(.+)$", re.I)
+METADATA_LABEL = re.compile(r"^\s*(?:từ loại|pos|ví dụ|example|dịch|translation)\s*:", re.I)
+
+# Explicit equivalents; arbitrary semantic similarity can change the meaning.
+VI_MEANING_ALTERNATIVES = {
+    "affordable": ("giá phải chăng", "giá hợp lý", "có giá phải chăng", "không quá đắt", "vừa túi tiền"),
+    "purchase": ("mua", "mua sắm", "việc mua hàng"),
+    "reimburse": ("hoàn tiền", "hoàn trả tiền", "bồi hoàn chi phí"),
+    "postpone": ("hoãn", "trì hoãn", "dời lại"),
+    "reschedule": ("đổi lịch", "sắp xếp lại lịch", "dời lịch"),
+    "invoice": ("hóa đơn",),
+    "deadline": ("hạn chót", "hạn cuối", "thời hạn cuối"),
+    "applicant": ("ứng viên", "người nộp đơn", "người ứng tuyển"),
+    "recruit": ("tuyển dụng", "tuyển người"),
+    "shipment": ("lô hàng", "chuyến hàng", "hàng được vận chuyển"),
+    "reservation": ("đặt chỗ", "sự đặt chỗ", "đặt phòng"),
+    "discount": ("giảm giá", "mức giảm giá", "chiết khấu"),
+    "revenue": ("doanh thu", "thu nhập từ kinh doanh"),
+    "equipment": ("thiết bị", "trang thiết bị"),
+    "maintenance": ("bảo trì", "bảo dưỡng"),
+    "comply": ("tuân thủ", "chấp hành", "làm theo quy định"),
+}
+
 VALID_LEARNING_DIRECTIONS = {
     DIRECTION_TERM_TO_DEFINITION,
     DIRECTION_DEFINITION_TO_TERM,
@@ -63,8 +86,14 @@ class LearningService:
             canonical_answer = flashcard.term.strip()
 
         accepted_answers = self._split_accepted_answers(
-            canonical_answer
+            canonical_answer, direction=direction,
         )
+        if direction == DIRECTION_TERM_TO_DEFINITION:
+            accepted_answers.extend(
+                VI_MEANING_ALTERNATIVES.get(
+                    self._normalize(flashcard.term), ()
+                )
+            )
         normalized_user = self._normalize(answer)
 
         # Ưu tiên khớp chính xác sau chuẩn hóa.
@@ -133,17 +162,49 @@ class LearningService:
         if direction == DIRECTION_DEFINITION_TO_TERM:
             return (
                 "What term matches this definition:",
-                flashcard.definition,
+                LearningService._display_meaning_only(flashcard.definition),
                 "Nhập Term...",
             )
 
         raise ValueError("Chiều học không hợp lệ.")
 
     @staticmethod
-    def _split_accepted_answers(value: str) -> list[str]:
-        parts = re.split(r"[,;|/\n]+", value)
+    def _display_meaning_only(definition: str) -> str:
+        """Hide examples/translation when prompting for the English term."""
+        for line in definition.splitlines():
+            match = MEANING_LABEL.match(line)
+            if match:
+                return match.group(1).strip()
+        return definition.strip()
+
+    @staticmethod
+    def _split_accepted_answers(
+        value: str,
+        direction: str = DIRECTION_TERM_TO_DEFINITION,
+    ) -> list[str]:
+        """Grade only the meaning, excluding metadata and example sentences."""
+        if direction == DIRECTION_DEFINITION_TO_TERM:
+            return [value.strip()]
+
+        meaning = None
+        for line in value.splitlines():
+            match = MEANING_LABEL.match(line)
+            if match:
+                meaning = match.group(1).strip()
+                break
+
+        if meaning is None:
+            plain_lines = []
+            for line in value.splitlines():
+                if METADATA_LABEL.match(line):
+                    break
+                if line.strip():
+                    plain_lines.append(line.strip())
+            meaning = " ".join(plain_lines).strip()
+
+        parts = re.split(r"[,;|/]+", meaning)
         answers = [part.strip() for part in parts if part.strip()]
-        return answers or [value.strip()]
+        return answers or [meaning]
 
     @staticmethod
     def _normalize(value: str) -> str:
