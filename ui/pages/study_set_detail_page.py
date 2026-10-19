@@ -46,6 +46,7 @@ class StudyModeCard(QFrame):
 
 class StudySetDetailPage(QWidget):
     back_requested = Signal()
+    today_review_requested = Signal(int)
     flashcards_requested = Signal(int)
     learn_requested = Signal(int)
     test_requested = Signal(int)
@@ -112,6 +113,14 @@ class StudySetDetailPage(QWidget):
         section_title.setObjectName("SectionTitle")
         layout.addWidget(section_title)
 
+        self.today_mode = StudyModeCard(
+            "Ôn tập hôm nay",
+            "Ưu tiên từ đến hạn, sau đó tối đa 15 từ mới; không học lại từ chưa đến hạn.",
+            "Ôn hôm nay",
+        )
+        self.today_mode.clicked.connect(self._request_today_review)
+        layout.addWidget(self.today_mode)
+
         self.flashcards_mode = StudyModeCard(
             "Flashcards",
             "Ôn từng thẻ bằng cách lật Term và Definition, sau đó tự đánh giá Again / Hard / Good / Easy.",
@@ -158,6 +167,7 @@ class StudySetDetailPage(QWidget):
         self.card_count_label.setText(f"{total} card" if total == 1 else f"{total} cards")
         self._show_progress(summary)
         has_cards = total > 0
+        self.today_mode.action_button.setEnabled(has_cards)
         self.flashcards_mode.action_button.setEnabled(has_cards)
         self.learn_mode.action_button.setEnabled(has_cards)
         self.test_mode.action_button.setEnabled(has_cards)
@@ -181,10 +191,15 @@ class StudySetDetailPage(QWidget):
         self.description_label.clear()
         self.description_label.setVisible(False)
         self.card_count_label.setText("0 cards")
+        self.today_mode.action_button.setEnabled(False)
         self.flashcards_mode.action_button.setEnabled(False)
         self.learn_mode.action_button.setEnabled(False)
         self.test_mode.action_button.setEnabled(False)
         self._show_progress({"new": 0, "learning": 0, "review": 0, "mastered": 0, "due": 0, "mastered_percent": 0.0})
+
+    def _request_today_review(self):
+        if self.current_set_id is not None:
+            self.today_review_requested.emit(self.current_set_id)
 
     def _request_flashcards(self):
         if self.current_set_id is not None:
